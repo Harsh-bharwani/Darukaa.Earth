@@ -1,0 +1,27 @@
+# Dependency directories (Node & Javascript)
+node_modules/
+.pnp
+.pnp.js
+dist/
+build/
+
+# Python Virtual Environments & Caches
+venv/
+.venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Sensitive Environment Configurations (Crucial for Security)
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Operating System Files
+.DS_Store
+Thumbs.db
