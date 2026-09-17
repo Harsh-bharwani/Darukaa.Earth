@@ -1,17 +1,33 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from app.database import get_db
 
-app = FastAPI(title="Darukaa.Earth API", version="1.0.0")
+app = FastAPI(title="Darukaa.Earth API Verification")
 
-# Enable CORS so our React frontend can securely communicate with this API
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, change this to your specific frontend URL
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 @app.get("/")
-def read_root():
-    return {"status": "healthy", "message": "Welcome to Darukaa.Earth Geospatial API"}
+def check_connection(db=Depends(get_db)):
+    try:
+        cursor = db.cursor()
+        cursor.execute("SELECT version();")
+        db_version = cursor.fetchone()
+        cursor.close()
+        
+        return {
+            "status": "Success",
+            "message": "Connected to PostgreSQL database successfully!",
+            "postgres_version": db_version["version"]
+        }
+    except Exception as e:
+        return {
+            "status": "Failed",
+            "message": "Could not connect to the database.",
+            "error_details": str(e)
+        }
