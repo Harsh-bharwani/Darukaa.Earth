@@ -143,3 +143,32 @@ def list_projects(db=Depends(get_db)):
         return projects
     finally:
         cursor.close()
+
+@app.get("/projects/{project_id}/analytics")
+def get_project_analytics(project_id: int, db=Depends(get_db)):
+    """
+    Queries chronological environmental metrics for all site boundaries 
+    contained within an active climate project.
+    """
+    cursor = db.cursor()
+    try:
+        # Query child analytics rows linked to sites matching this project ID
+        cursor.execute(
+            """
+            SELECT sa.record_year, sa.carbon_tonnes, sa.biodiversity_index, s.site_name
+            FROM site_analytics sa
+            JOIN sites s ON sa.site_id = s.id
+            WHERE s.project_id = %s
+            ORDER BY sa.record_year ASC;
+            """,
+            (project_id,)
+        )
+        analytics_records = cursor.fetchall()
+        return analytics_records
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch environmental data metrics: {str(e)}"
+        )
+    finally:
+        cursor.close()

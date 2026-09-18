@@ -17,7 +17,6 @@ import {
 import "@mapbox/mapbox-gl-draw/dist/mapbox-gl-draw.css";
 import "mapbox-gl/dist/mapbox-gl.css";
 
-// Register ChartJS subcomponents globally for rendering animations
 ChartJS.register(
   CategoryScale,
   LinearScale,
@@ -28,7 +27,7 @@ ChartJS.register(
   Legend,
 );
 
-// Set your Mapbox Public Token (For local development/hackathons, use a public access key)
+// Public access token for development rendering
 mapboxgl.accessToken =
   "pk.eyJ1IjoiZGFydWthYS1kZXYiLCJhIjoiY20wZXhyeXdtMDNscTJpcHR6ZzBndm5hcCJ9.s-9bMWRbK7O7U3S_K6rL6A";
 
@@ -39,11 +38,12 @@ export default function Dashboard({ onLogout }) {
 
   const [projects, setProjects] = useState([]);
   const [selectedProject, setSelectedProject] = useState(null);
+  const [analyticsData, setAnalyticsData] = useState([]);
   const [newTitle, setNewTitle] = useState("");
   const [newDesc, setNewDesc] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // 1. Fetch Projects from Backend on Boot
+  // 1. Fetch All Available Projects from Backend
   const fetchProjects = async () => {
     try {
       const res = await api.get("/projects");
@@ -56,18 +56,35 @@ export default function Dashboard({ onLogout }) {
     }
   };
 
+  // 2. Fetch Live Database Time-Series Dataset for Selected Project
+  const fetchAnalytics = async (projectId) => {
+    try {
+      const res = await api.get(`/projects/${projectId}/analytics`);
+      setAnalyticsData(res.data);
+    } catch (err) {
+      console.error("Failed to stream live dataset records:", err);
+    }
+  };
+
   useEffect(() => {
     fetchProjects();
   }, []);
 
-  // 2. Initialize Mapbox Engine Context
+  // Sync analytics fetch whenever active project selection changes
   useEffect(() => {
-    if (mapRef.current) return; // Prevent double initialization layout
+    if (selectedProject?.id) {
+      fetchAnalytics(selectedProject.id);
+    }
+  }, [selectedProject]);
+
+  // 3. Initialize Mapbox Engine
+  useEffect(() => {
+    if (mapRef.current) return;
 
     const map = new mapboxgl.Map({
       container: mapContainerRef.current,
       style: "mapbox://styles/mapbox/outdoors-v12",
-      center: [-62.0, -10.5], // Centered around our Amazon test coordinates
+      center: [-62.0, -10.5],
       zoom: 6,
     });
 
@@ -85,24 +102,7 @@ export default function Dashboard({ onLogout }) {
     return () => map.remove();
   }, []);
 
-  // 3. Handle Map Camera Adjustment when Active Project Cycles
-  useEffect(() => {
-    if (!mapRef.current || !selectedProject || !selectedProject.sites.length)
-      return;
-
-    try {
-      // Extract the first coordinate coordinate pair to focus camera
-      const coords = selectedProject.sites[0].boundary.coordinates[0][0];
-      mapRef.current.flyTo({ center: coords, zoom: 8, essential: true });
-    } catch (e) {
-      console.warn(
-        "Could not parse geometry coordinates for camera tracking:",
-        e,
-      );
-    }
-  }, [selectedProject]);
-
-  // 4. Handle Submitting a New Mapped Forest Site Plot
+  // 4. Submit Drawn Map Geometry to PostGIS Backend
   const handleCreateProject = async (e) => {
     e.preventDefault();
     if (!newTitle) return;
@@ -117,7 +117,6 @@ export default function Dashboard({ onLogout }) {
 
     setLoading(true);
     try {
-      // Format the canvas inputs into our Pydantic schema layout structure
       const payload = {
         title: newTitle,
         description: newDesc,
@@ -132,26 +131,23 @@ export default function Dashboard({ onLogout }) {
       await api.post("/projects", payload);
       setNewTitle("");
       setNewDesc("");
-      drawRef.current.deleteAll(); // Wipe map canvas clean
-      fetchProjects(); // Hot-reload sidebar list
+      drawRef.current.deleteAll();
+      fetchProjects();
       alert("Project boundaries saved successfully into PostGIS!");
     } catch (err) {
-      alert("Data mapping insertion crashed. Verify token parameters.");
+      alert("Data mapping insertion crashed.");
     } finally {
       setLoading(false);
     }
   };
 
-  // 5. Mock Environmental Analytics Data Structure
+  // 5. Dynamic Chart Data Mapping from Live Database Response
   const chartData = {
-    labels: ["2021", "2022", "2023", "2024", "2025", "2026"],
+    labels: analyticsData.map((row) => row.record_year),
     datasets: [
       {
         label: "Carbon Sequestration (Metric Tons / Year)",
-        data:
-          selectedProject?.id % 2 === 0
-            ? [120, 240, 410, 630, 890, 1150]
-            : [80, 150, 300, 500, 750, 1000],
+        data: analyticsData.map((row) => parseFloat(row.carbon_tonnes)),
         borderColor: "#059669",
         backgroundColor: "rgba(5, 150, 105, 0.1)",
         tension: 0.3,
@@ -162,7 +158,6 @@ export default function Dashboard({ onLogout }) {
 
   return (
     <div style={styles.dashboardContainer}>
-      {/* SIDEBAR DASHBOARD CONTROL LAYER */}
       <div style={styles.sidebar}>
         <div style={styles.header}>
           <h2 style={styles.branding}>Darukaa Panel</h2>
@@ -171,7 +166,6 @@ export default function Dashboard({ onLogout }) {
           </button>
         </div>
 
-        {/* DATA INSERTION CARD */}
         <form onSubmit={handleCreateProject} style={styles.cardForm}>
           <h3 style={styles.sectionTitle}>Map a New Project Site</h3>
           <input
@@ -197,7 +191,6 @@ export default function Dashboard({ onLogout }) {
           </button>
         </form>
 
-        {/* TRACKED SITES LOG */}
         <div style={styles.listContainer}>
           <h3 style={styles.sectionTitle}>Active Nature Projects</h3>
           {projects.map((p) => (
@@ -218,17 +211,14 @@ export default function Dashboard({ onLogout }) {
               <p style={styles.projectDesc}>
                 {p.description || "No description listed."}
               </p>
-              <span style={styles.badge}>
-                {p.sites?.length || 0} Plot Layer
-              </span>
+              <span style={styles.badge}>Active Plot Layer</span>
             </div>
           ))}
         </div>
 
-        {/* TIME SERIES ANALYTICS DRAWER */}
-        {selectedProject && (
+        {selectedProject && analyticsData.length > 0 && (
           <div style={styles.analyticsWrapper}>
-            <h3 style={styles.sectionTitle}>Carbon Sequestration Yield</h3>
+            <h3 style={styles.sectionTitle}>Live Carbon Sequestration Yield</h3>
             <div style={{ height: "160px" }}>
               <Line
                 data={chartData}
@@ -239,7 +229,6 @@ export default function Dashboard({ onLogout }) {
         )}
       </div>
 
-      {/* INTERACTIVE MAP CANVAS CONTAINER */}
       <div ref={mapContainerRef} style={styles.mapContainer} />
     </div>
   );
