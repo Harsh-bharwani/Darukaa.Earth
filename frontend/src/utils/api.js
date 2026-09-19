@@ -3,7 +3,7 @@ import axios from "axios";
 // Enforce dynamic environment target variables
 const api = axios.create({
   baseURL: import.meta.env.PROD
-    ? "https://onrender.com" // You will paste your actual Render Web Service URL here later
+    ? "https://darukaa-earth-backend-ssgl.onrender.com"
     : "http://127.0.0.1:8000",
   headers: {
     "Content-Type": "application/json",
