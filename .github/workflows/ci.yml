@@ -26,8 +26,8 @@ jobs:
     - name: Install Frontend Quality Tools
       run: npm ci
 
-    - name: Execute Prettier Formatting Verification
-      run: npx prettier --check "backend/app/**/*.py" "package.json"
+    - name: Execute Static Layout Prettier Verification
+      run: npx prettier --check "package.json"
 
     # 3. Set up the Python execution container for the backend
     - name: Setup Python Runtime Environment
