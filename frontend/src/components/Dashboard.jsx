@@ -27,12 +27,10 @@ ChartJS.register(
   Legend,
 );
 
-// Public access token for development rendering
 mapboxgl.accessToken =
-  "pk.eyJ1IjoiZGFydWthYS1kZXYiLCJhIjoiY20wZXhyeXdtMDNscTJpcHR6ZzBndm5hcCJ9.s-9bMWRbK7O7U3S_K6rL6A";
+  "pk.eyJ1IjoiaGFyc2hiaGFyd2FuaSIsImEiOiJjbXU3OTdpanEwZ3d6MnlzOG4wN3hzNDNwIn0.WKAw4utu4tMpi5NwfoZ_kg";
 
 export default function Dashboard({ onLogout }) {
-  const mapContainerRef = useRef(null);
   const mapRef = useRef(null);
   const drawRef = useRef(null);
 
@@ -43,7 +41,6 @@ export default function Dashboard({ onLogout }) {
   const [newDesc, setNewDesc] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // 1. Fetch All Available Projects from Backend
   const fetchProjects = async () => {
     try {
       const res = await api.get("/projects");
@@ -56,7 +53,6 @@ export default function Dashboard({ onLogout }) {
     }
   };
 
-  // 2. Fetch Live Database Time-Series Dataset for Selected Project
   const fetchAnalytics = async (projectId) => {
     try {
       const res = await api.get(`/projects/${projectId}/analytics`);
@@ -70,45 +66,151 @@ export default function Dashboard({ onLogout }) {
     fetchProjects();
   }, []);
 
-  // Sync analytics fetch whenever active project selection changes
   useEffect(() => {
     if (selectedProject?.id) {
       fetchAnalytics(selectedProject.id);
     }
   }, [selectedProject]);
 
-  // 3. Initialize Mapbox Engine
   useEffect(() => {
     if (mapRef.current) return;
 
-    const map = new mapboxgl.Map({
-      container: mapContainerRef.current,
-      style: "mapbox://styles/mapbox/outdoors-v12",
-      center: [-62.0, -10.5],
-      zoom: 6,
-    });
+    const mapInitTimer = setTimeout(() => {
+      try {
+        const map = new mapboxgl.Map({
+          container: "map-canvas",
+          style: "mapbox://styles/mapbox/outdoors-v12",
+          center: [-62.0, -10.5],
+          zoom: 4,
+          trackResize: true,
+        });
 
-    const draw = new MapboxDraw({
-      displayControlsDefault: false,
-      controls: { polygon: true, trash: true },
-      defaultMode: "draw_polygon",
-    });
+        mapRef.current = map;
 
-    map.addControl(draw, "top-right");
+        map.on("load", () => {
+          if (!mapRef.current) return;
 
-    mapRef.current = map;
-    drawRef.current = draw;
+          // Initialize vector source layer contexts natively
+          mapRef.current.addSource("active-project-source", {
+            type: "geojson",
+            data: {
+              type: "FeatureCollection",
+              features: [],
+            },
+          });
 
-    return () => map.remove();
+          mapRef.current.addLayer({
+            id: "project-fill-layer",
+            type: "fill",
+            source: "active-project-source",
+            layout: {},
+            paint: {
+              "fill-color": "#059669",
+              "fill-opacity": 0.25,
+            },
+          });
+
+          mapRef.current.addLayer({
+            id: "project-outline-layer",
+            type: "line",
+            source: "active-project-source",
+            layout: {},
+            paint: {
+              "line-color": "#047857",
+              "line-width": 3,
+            },
+          });
+
+          const draw = new MapboxDraw({
+            displayControlsDefault: false,
+            controls: { polygon: true, trash: true },
+            defaultMode: "draw_polygon",
+          });
+
+          mapRef.current.addControl(draw, "top-right");
+          drawRef.current = draw;
+          mapRef.current.resize();
+        });
+      } catch (err) {
+        console.error("Mapbox rendering failed initialization:", err);
+      }
+    }, 100);
+
+    return () => {
+      clearTimeout(mapInitTimer);
+      if (mapRef.current) {
+        mapRef.current.remove();
+        mapRef.current = null;
+        drawRef.current = null;
+      }
+    };
   }, []);
 
-  // 4. Submit Drawn Map Geometry to PostGIS Backend
+  // FIXED selectedProject effect mapping: cleanly parses 3D coordinate rings and draws layers
+  useEffect(() => {
+    if (
+      !mapRef.current ||
+      !selectedProject ||
+      !selectedProject.sites ||
+      !selectedProject.sites.length
+    )
+      return;
+
+    try {
+      // 1. Isolate the zero-index site object out of the project sites array list securely
+      const targetSite = selectedProject.sites[0];
+
+      if (
+        targetSite &&
+        targetSite.boundary &&
+        targetSite.boundary.coordinates
+      ) {
+        const polygonCoordinates = targetSite.boundary.coordinates;
+
+        // 2. Unpack the nested loop array to fetch a flat [lng, lat] coordinate point for camera flight paths
+        const firstPoint = polygonCoordinates[0][0];
+
+        mapRef.current.flyTo({
+          center: firstPoint,
+          zoom: 7,
+          essential: true,
+        });
+
+        // 3. Assemble clean GeoJSON layouts mapping matching specifications
+        const geoJsonFeature = {
+          type: "Feature",
+          properties: {},
+          geometry: {
+            type: "Polygon",
+            coordinates: polygonCoordinates,
+          },
+        };
+
+        // 4. Mount geometry coordinates directly to active hardware vectors via setData()
+        const targetSource = mapRef.current.getSource("active-project-source");
+        if (targetSource) {
+          targetSource.setData({
+            type: "FeatureCollection",
+            features: [geoJsonFeature],
+          });
+        }
+      }
+    } catch (e) {
+      console.warn("Geospatial layer rendering bypassed:", e);
+    }
+  }, [selectedProject]);
+
   const handleCreateProject = async (e) => {
     e.preventDefault();
-    if (!newTitle) return;
+    if (!newTitle.trim()) return;
+
+    if (!drawRef.current) {
+      alert("Map rendering tools are loading. Please wait a moment.");
+      return;
+    }
 
     const drawnData = drawRef.current.getAll();
-    if (!drawnData.features.length) {
+    if (!drawnData || !drawnData.features || !drawnData.features.length) {
       alert(
         "Please use the polygon tool to draw at least one forest boundary on the map first.",
       );
@@ -117,13 +219,18 @@ export default function Dashboard({ onLogout }) {
 
     setLoading(true);
     try {
+      const geoGeometry = drawnData.features[0].geometry;
+
       const payload = {
-        title: newTitle,
-        description: newDesc,
+        title: newTitle.trim(),
+        description: newDesc.trim() || null,
         sites: [
           {
-            site_name: `${newTitle} Primary Plot`,
-            boundary: drawnData.features[0].geometry,
+            site_name: `${newTitle.trim()} Primary Plot`,
+            boundary: {
+              type: "Polygon",
+              coordinates: geoGeometry.coordinates,
+            },
           },
         ],
       };
@@ -135,13 +242,19 @@ export default function Dashboard({ onLogout }) {
       fetchProjects();
       alert("Project boundaries saved successfully into PostGIS!");
     } catch (err) {
-      alert("Data mapping insertion crashed.");
+      console.error("API error during project persistence:", err);
+      const backendMessage =
+        err.response?.data?.detail || "Data mapping insertion crashed.";
+      alert(
+        typeof backendMessage === "object"
+          ? JSON.stringify(backendMessage)
+          : backendMessage,
+      );
     } finally {
       setLoading(false);
     }
   };
 
-  // 5. Dynamic Chart Data Mapping from Live Database Response
   const chartData = {
     labels: analyticsData.map((row) => row.record_year),
     datasets: [
@@ -229,7 +342,7 @@ export default function Dashboard({ onLogout }) {
         )}
       </div>
 
-      <div ref={mapContainerRef} style={styles.mapContainer} />
+      <div id="map-canvas" style={styles.mapContainer} />
     </div>
   );
 }
@@ -242,6 +355,7 @@ const styles = {
     overflow: "hidden",
     fontFamily: "system-ui, sans-serif",
     backgroundColor: "#f9fafb",
+    color: "#111827",
   },
   sidebar: {
     width: "420px",
@@ -253,6 +367,7 @@ const styles = {
     boxSizing: "border-box",
     backgroundColor: "#ffffff",
     overflowY: "auto",
+    zIndex: 10,
   },
   header: {
     display: "flex",
@@ -271,6 +386,7 @@ const styles = {
     borderRadius: "6px",
     border: "1px solid #d1d5db",
     backgroundColor: "#ffffff",
+    color: "#374151",
     fontSize: "0.85rem",
     cursor: "pointer",
     fontWeight: "500",
@@ -290,7 +406,6 @@ const styles = {
     fontSize: "0.9rem",
     fontWeight: "700",
     textTransform: "uppercase",
-    tracking: "0.05em",
     color: "#4b5563",
   },
   input: {
@@ -300,6 +415,7 @@ const styles = {
     fontSize: "0.9rem",
     outline: "none",
     backgroundColor: "#ffffff",
+    color: "#111827",
   },
   helperText: {
     margin: 0,
@@ -354,6 +470,19 @@ const styles = {
     padding: "0.2rem 0.5rem",
     borderRadius: "12px",
   },
-  analyticsWrapper: { borderTop: "1px solid #e5e7eb", paddingTop: "1.25rem" },
-  mapContainer: { flex: 1, height: "100%" },
+  analyticsWrapper: {
+    borderTop: "1px solid #e5e7eb",
+    paddingTop: "1.25rem",
+    color: "#111827",
+  },
+  mapContainer: {
+    width: "calc(100vw - 420px)",
+    height: "100vh",
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: "420px",
+    backgroundColor: "#e5e7eb",
+  },
 };
