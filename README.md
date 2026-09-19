@@ -74,7 +74,7 @@ Fire up the live local hot-reload web server:
 uvicorn app.main:app --reload
 ```
 
-_The interactive API dashboard documents will mount automatically at: `http://127.0.0`_
+_The interactive API dashboard documents will mount automatically at: `http://127.0.0.1:8000/docs`_
 
 ### 3. Frontend Dashboard Interface Setup
 

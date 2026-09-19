@@ -1,14 +1,15 @@
 import axios from "axios";
 
-// Establishes a unified network anchor pointing to our local FastAPI server instance
+// Enforce dynamic environment target variables
 const api = axios.create({
-  baseURL: "http://127.0.0.1:8000",
+  baseURL: import.meta.env.PROD
+    ? "https://onrender.com" // You will paste your actual Render Web Service URL here later
+    : "http://127.0.0.1:8000",
   headers: {
     "Content-Type": "application/json",
   },
 });
 
-// Outgoing Request Interceptor: Automatically attaches security tokens to protected map endpoints
 api.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem("token");
